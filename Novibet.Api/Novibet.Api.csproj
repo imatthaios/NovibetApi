@@ -1,0 +1,21 @@
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
+    <PropertyGroup>
+        <TargetFramework>net8.0</TargetFramework>
+        <Nullable>enable</Nullable>
+        <ImplicitUsings>enable</ImplicitUsings>
+      <UserSecretsId>167d1000-4b5b-437a-93ba-4ec4431a4aff</UserSecretsId>
+  </PropertyGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\Novibet.Infrastructure\Novibet.Infrastructure.csproj" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Autofac" />
+        <PackageReference Include="Autofac.Extensions.DependencyInjection" />
+        <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
+        <PackageReference Include="MediatR" />
+        <PackageReference Include="Swashbuckle.AspNetCore" />
+        <PackageReference Include="Quartz.AspNetCore" />
+    </ItemGroup>
+</Project>
