@@ -1,34 +1,22 @@
-using System.Data.Common;
+// AppDbContext.cs
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Infrastructure;
 using Novibet.Application.Common.Interfaces;
 using Novibet.Domain.Entities;
+using System.Data.Common;
 
 namespace Novibet.Infrastructure.Persistence;
 
 public class AppDbContext : DbContext, IApplicationDbContext
 {
-    public DbConnection CreateDbConnection() => Database.GetDbConnection();
     public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
-    public new DatabaseFacade Database => base.Database;
-    public DbSet<CurrencyRate> CurrencyRates => Set<CurrencyRate>();
-    public DbSet<Wallet> Wallets { get; set; }    
-    public new Task<int> SaveChangesAsync(CancellationToken cancellationToken)
-        => base.SaveChangesAsync(cancellationToken);
-    
-    protected override void OnModelCreating(ModelBuilder modelBuilder)
-    {
-        modelBuilder.Entity<CurrencyRate>(e =>
-        {
-            e.HasKey(x => x.Id);
-            e.Property(x => x.Currency).IsRequired().HasMaxLength(3);
-            e.HasIndex(x => new { x.Currency, x.Date }).IsUnique();
-        });
 
-        modelBuilder.Entity<Wallet>(e =>
-        {
-            e.HasKey(x => x.Id);
-            e.Property(x => x.Currency).IsRequired().HasMaxLength(3);
-        });
+    public DbSet<Wallet> Wallets => Set<Wallet>();
+    public DbSet<CurrencyRate> CurrencyRates => Set<CurrencyRate>();
+
+    public DbConnection CreateDbConnection() => Database.GetDbConnection();
+    
+    public async Task<int> ExecuteSqlRawAsync(string sql, object[] objects, CancellationToken cancellationToken)
+    {
+        return await Database.ExecuteSqlRawAsync(sql, cancellationToken);
     }
 }

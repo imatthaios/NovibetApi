@@ -172,7 +172,7 @@ namespace Novibet.Tests.Services
             Assert.True(result.IsSuccess);
             Assert.NotNull(result.Data);
             Assert.Equal("USD", result.Data!.Currency);
-            Assert.Equal(110, result.Data!.Balance);
+            Assert.Equal(110, result.Data.Balance);
         }
 
         [Fact]
@@ -185,7 +185,7 @@ namespace Novibet.Tests.Services
             var result = await _walletService.GetWalletAsync(wallet.Id, "GBP", CancellationToken.None);
 
             Assert.False(result.IsSuccess);
-            Assert.Contains("not found", result.Error);
+            Assert.Contains("Conversion rate(s) missing for", result.Error);
         }
     }
 }

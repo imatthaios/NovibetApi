@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations;
 using MediatR;
 using Novibet.Application.Common.Interfaces;
 using Novibet.Application.Common.Models;
@@ -7,6 +8,7 @@ namespace Novibet.Application.Wallets.Queries;
 
 public class GetWalletByIdQuery : IRequest<Result<WalletDto>>, ICacheableRequest
 {
+    [Required(ErrorMessage = "WalletId is required")]
     public long WalletId { get; }
     public string Currency { get; }
     

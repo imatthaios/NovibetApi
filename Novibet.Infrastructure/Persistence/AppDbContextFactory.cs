@@ -1,7 +1,7 @@
+using System.Reflection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
 using Microsoft.Extensions.Configuration;
-using System.Reflection;
 
 namespace Novibet.Infrastructure.Persistence;
 

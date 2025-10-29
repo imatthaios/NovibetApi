@@ -2,18 +2,19 @@ namespace Novibet.Application.Wallets.Strategies;
 
 public class WalletStrategyFactory : IWalletStrategyFactory
 {
-    private readonly IEnumerable<IWalletStrategy> _strategies;
+    private readonly Dictionary<string, IWalletStrategy> _strategies = new(StringComparer.OrdinalIgnoreCase);
 
     public WalletStrategyFactory(IEnumerable<IWalletStrategy> strategies)
     {
-        _strategies = strategies;
+        foreach (var strat in strategies)
+            _strategies[strat.Name] = strat;
     }
 
     public IWalletStrategy GetStrategy(string name)
     {
-        var strategy = _strategies.FirstOrDefault(s => s.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
-        if (strategy == null)
-            throw new InvalidOperationException($"Strategy '{name}' not found.");
-        return strategy;
+        if (_strategies.TryGetValue(name, out var strat))
+            return strat;
+
+        throw new InvalidOperationException($"Strategy '{name}' not found.");
     }
 }

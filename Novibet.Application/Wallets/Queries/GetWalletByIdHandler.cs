@@ -1,7 +1,7 @@
 using MediatR;
 using Novibet.Application.Common.Models;
-using Novibet.Application.Wallets.Services;
 using Novibet.Application.Dtos;
+using Novibet.Application.Wallets.Services;
 
 namespace Novibet.Application.Wallets.Queries;
 

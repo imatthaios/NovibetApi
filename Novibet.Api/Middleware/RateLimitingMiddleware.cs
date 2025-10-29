@@ -1,6 +1,6 @@
+using System.Collections.Concurrent;
 using Microsoft.Extensions.Options;
 using Novibet.Application.Options;
-using System.Collections.Concurrent;
 
 namespace Novibet.Api.Middleware;
 

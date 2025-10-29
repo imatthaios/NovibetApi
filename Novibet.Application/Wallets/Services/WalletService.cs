@@ -15,7 +15,6 @@ public class WalletService : IWalletService
     private readonly IWalletStrategyFactory _strategyFactory;
     private readonly IMemoryCache _cache;
     private readonly ILogger<WalletService> _logger;
-
     private static readonly ConcurrentDictionary<long, SemaphoreSlim> WalletLocks = new();
 
     private static readonly MemoryCacheEntryOptions CacheOptions = new()
@@ -35,81 +34,78 @@ public class WalletService : IWalletService
         _cache = cache;
         _logger = logger;
     }
-    
-    public async Task<Result<long>> CreateWalletAsync(decimal initialBalance, string currency, CancellationToken cancellationToken)
+
+    public async Task<Result<long>> CreateWalletAsync(decimal initialBalance, string currency,
+        CancellationToken cancellationToken)
     {
-        _logger.LogInformation("Creating wallet with balance {Balance} and currency {Currency}", initialBalance, currency);
-
-        if (initialBalance < 0)
-            return Result<long>.Fail("Initial balance cannot be negative.");
-
-        if (string.IsNullOrWhiteSpace(currency))
-            return Result<long>.Fail("Currency must be provided.");
-
+        _logger.LogInformation("Creating wallet with balance {Balance} and currency {Currency}", initialBalance,
+            currency);
         var wallet = new Wallet
         {
             Balance = initialBalance,
             Currency = currency.ToUpperInvariant()
         };
+        _context.Wallets.Add(wallet);
 
         try
         {
             _context.Wallets.Add(wallet);
             await _context.SaveChangesAsync(cancellationToken);
-
-            _logger.LogInformation("Wallet {Id} created successfully.", wallet.Id);
-
-            _cache.Set($"wallet_{wallet.Id}", wallet, CacheOptions);
+            _cache.Set($"wallet_{wallet.Id}_{wallet.Currency}", wallet, CacheOptions);
+            _logger.LogInformation("Created wall1et {Id} {Currency}", wallet.Id, wallet.Currency);
 
             return Result<long>.Ok(wallet.Id);
         }
-        catch (DbUpdateException ex)
+        catch (Exception ex)
         {
-            _logger.LogError(ex, "Database error creating wallet");
-            return Result<long>.Fail($"Database error: {ex.Message}");
+            _logger.LogError(ex, "CreateWallet failed");
+            return Result<long>.Fail("Database error.");
         }
     }
 
-    public async Task<Result<Wallet>> GetWalletAsync(long walletId, string? currency, CancellationToken cancellationToken)
+    public async Task<Result<Wallet>> GetWalletAsync(long id, string? currency, CancellationToken cancellationToken)
     {
-        _logger.LogInformation("Fetching wallet {WalletId} (currency={Currency})", walletId, currency);
+        _logger.LogInformation("Fetching wallet {WalletId} (currency={Currency})", id, currency);
 
-        if (_cache.TryGetValue($"wallet_{walletId}_{currency}", out Wallet? cachedWallet))
+        if (_cache.TryGetValue($"wallet_{id}_{currency}", out Wallet? cachedWallet))
         {
-            _logger.LogDebug("Cache hit for wallet {WalletId} and currency {Currency}", walletId, currency);
-            if (!string.IsNullOrEmpty(currency) && !currency.Equals(cachedWallet?.Currency, StringComparison.OrdinalIgnoreCase))
+            _logger.LogDebug("Cache hit for wallet {WalletId} and currency {Currency}", id, currency);
+            if (!string.IsNullOrEmpty(currency) &&
+                !currency.Equals(cachedWallet?.Currency, StringComparison.OrdinalIgnoreCase))
             {
                 var conversionResult = await ConvertCurrencyAsync(cachedWallet!, currency, cancellationToken);
-                if (conversionResult is { IsSuccess: false, Error: not null }) return Result<Wallet>.Fail(conversionResult.Error);
+                if (conversionResult is { IsSuccess: false, Error: not null })
+                    return Result<Wallet>.Fail(conversionResult.Error);
             }
-            
-            return Result<Wallet>.Ok(cachedWallet);
+
+            if (cachedWallet != null) return Result<Wallet>.Ok(cachedWallet);
         }
 
-        _logger.LogDebug("Cache miss for wallet {WalletId} and currency {Currency}, loading from DB", walletId, currency);
+        _logger.LogDebug("Cache miss for wallet {WalletId} and currency {Currency}, loading from DB", id, currency);
 
-        var wallet = await _context.Wallets.FirstOrDefaultAsync(w => w.Id == walletId, cancellationToken);
+        var wallet = await _context.Wallets.FirstOrDefaultAsync(w => w.Id == id, cancellationToken);
         if (wallet == null)
         {
-            _logger.LogWarning("Wallet {WalletId} not found.", walletId);
-            return Result<Wallet>.Fail($"Wallet with ID {walletId} not found.");
+            _logger.LogWarning("Wallet {WalletId} not found.", id);
+            return Result<Wallet>.Fail($"Wallet with ID {id} not found.");
         }
 
         if (!string.IsNullOrEmpty(currency) && !currency.Equals(wallet.Currency, StringComparison.OrdinalIgnoreCase))
         {
             var conversionResult = await ConvertCurrencyAsync(wallet, currency, cancellationToken);
-            if (!conversionResult.IsSuccess)
-                return Result<Wallet>.Fail(conversionResult.Error);
+            if (!conversionResult.IsSuccess) return Result<Wallet>.Fail(conversionResult.Error);
         }
 
-        _cache.Set($"wallet_{walletId}", wallet, CacheOptions);
+        _cache.Set($"wallet_{id}_{currency}", wallet, CacheOptions);
 
         return Result<Wallet>.Ok(wallet);
     }
 
-    public async Task<Result> AdjustBalanceAsync(long walletId, decimal amount, string currency, string strategy, CancellationToken cancellationToken)
+    public async Task<Result> AdjustBalanceAsync(long walletId, decimal amount, string currency, string strategy,
+        CancellationToken cancellationToken)
     {
-        _logger.LogInformation("Adjusting wallet {WalletId} by {Amount} {Currency} using strategy {Strategy}", walletId, amount, currency, strategy);
+        _logger.LogInformation("Adjusting wallet {WalletId} by {Amount} {Currency} using strategy {Strategy}", walletId,
+            amount, currency, strategy);
 
         if (amount <= 0) return Result.Fail("Amount must be positive.");
 
@@ -127,11 +123,12 @@ public class WalletService : IWalletService
         {
             var strat = _strategyFactory.GetStrategy(strategy);
             strat.Execute(wallet, amount);
-            
+
             await _context.SaveChangesAsync(cancellationToken);
             _cache.Set($"wallet_{walletId}", wallet, CacheOptions);
-            _logger.LogInformation("Wallet {WalletId} adjusted successfully (new balance={Balance})", walletId, wallet.Balance);
-            
+            _logger.LogInformation("Wallet {WalletId} adjusted successfully (new balance={Balance})", walletId,
+                wallet.Balance);
+
             return Result.Ok();
         }
         catch (InvalidOperationException ex)
@@ -149,10 +146,12 @@ public class WalletService : IWalletService
             walletLock.Release();
         }
     }
-    
-    private async Task<Result> ConvertCurrencyAsync(Wallet wallet, string targetCurrency, CancellationToken cancellationToken)
+
+    private async Task<Result> ConvertCurrencyAsync(Wallet wallet, string targetCurrency,
+        CancellationToken cancellationToken)
     {
-        _logger.LogDebug("Converting wallet {WalletId} from {FromCurrency} to {ToCurrency}", wallet.Id, wallet.Currency, targetCurrency);
+        _logger.LogDebug("Converting wallet {WalletId} from {FromCurrency} to {ToCurrency}", wallet.Id, wallet.Currency,
+            targetCurrency);
 
         if (wallet.Currency.Equals(targetCurrency, StringComparison.OrdinalIgnoreCase))
             return Result.Ok();
@@ -183,7 +182,8 @@ public class WalletService : IWalletService
 
         wallet.Currency = targetCurrency.ToUpperInvariant();
 
-        _logger.LogInformation("Wallet {WalletId} converted successfully to {Currency} (new balance={Balance})", wallet.Id, targetCurrency, wallet.Balance);
+        _logger.LogInformation("Wallet {WalletId} converted successfully to {Currency} (new balance={Balance})",
+            wallet.Id, targetCurrency, wallet.Balance);
 
         return Result.Ok();
     }

@@ -1,85 +1,178 @@
+using System.Globalization;
 using System.Xml.Linq;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Novibet.Application.Common.Models;
-using Novibet.Application.Options;
+using Novibet.Application.Common.Interfaces;
 using Novibet.Application.Interfaces;
 using Novibet.Domain.Entities;
+using Novibet.Infrastructure.Helpers;
+using Novibet.Infrastructure.Options;
 
 namespace Novibet.Infrastructure.Services.EcbGateway;
 
 public class EcbRateService : IEcbRateService
 {
-    private readonly HttpClient _httpClient;
     private readonly IMemoryCache _cache;
+    private readonly IApplicationDbContext _context;
     private readonly ILogger<EcbRateService> _logger;
-    private readonly EcbApiOptions _options;
+    private readonly EcbOptions _options;
+    private readonly IHttpClientHelper _httpClientHelper;
 
-    private const string CacheKey = "latest_ecb_rates";
+    private const string RatesCacheKey = "ecb_rates_{0}";
 
     public EcbRateService(
-        HttpClient httpClient,
         IMemoryCache cache,
-        IOptions<EcbApiOptions> options,
-        ILogger<EcbRateService> logger)
+        IApplicationDbContext context,
+        IOptions<EcbOptions> options,
+        ILogger<EcbRateService> logger,
+        IHttpClientHelper httpClientHelper)
     {
-        _httpClient = httpClient;
-        _cache = cache;
+        _context = context;
         _logger = logger;
+        _cache = cache;
         _options = options.Value;
+        _httpClientHelper = httpClientHelper;
     }
 
-    public async Task<Result<List<CurrencyRate>>> FetchRatesAsync(CancellationToken cancellationToken)
+    public async Task UpdateRatesAsync(CancellationToken cancellationToken)
     {
+        _logger.LogInformation("Starting ECB rates update from {Url}", _options.Url);
+
         try
         {
-            if (_cache.TryGetValue(CacheKey, out List<CurrencyRate>? cachedRates))
-            {
-                if (cachedRates != null)
-                {
-                    _logger.LogInformation("Returning cached ECB rates ({Count} entries).", cachedRates.Count);
-                    return Result<List<CurrencyRate>>.Ok(cachedRates);
-                }
-            }
+            var xmlContent = await _httpClientHelper.GetStringAsync(_options.Url, cancellationToken);
+            var document = XDocument.Parse(xmlContent);
 
-            _logger.LogInformation("Fetching ECB rates from {Url}", _options.Url);
+            var cube = document.Descendants()
+                .FirstOrDefault(e => e.Name.LocalName == "Cube" && e.Attribute("time") != null);
 
-            var response = await _httpClient.GetStringAsync(_options.Url, cancellationToken);
-            var xml = XDocument.Parse(response);
-
-            var cube = xml.Descendants().FirstOrDefault(e => e.Attribute("time") != null);
             if (cube == null)
             {
-                _logger.LogWarning("ECB XML response did not contain expected <Cube> structure.");
-                return Result<List<CurrencyRate>>.Fail("Invalid ECB data format.");
+                _logger.LogWarning("ECB feed is missing expected structure.");
+                return;
             }
 
-            var date = DateTime.Parse(cube.Attribute("time")!.Value);
+            var date = DateTime.Parse(cube.Attribute("time")?.Value!, CultureInfo.InvariantCulture);
             var rates = cube.Elements()
-                .Select(e => new CurrencyRate
+                .Select(x => new CurrencyRate
                 {
-                    Currency = e.Attribute("currency")!.Value,
-                    Rate = decimal.Parse(e.Attribute("rate")!.Value),
+                    Currency = x.Attribute("currency")?.Value?.ToUpper() ?? "",
+                    Rate = decimal.Parse(x.Attribute("rate")?.Value ?? "0", CultureInfo.InvariantCulture),
                     Date = date
                 })
+                .Where(r => !string.IsNullOrEmpty(r.Currency) && IsValidCurrencyCode(r.Currency))
                 .ToList();
 
-            rates.Add(new CurrencyRate { Currency = "EUR", Rate = 1m, Date = date });
-            _cache.Set(CacheKey, rates, TimeSpan.FromHours(1));
-            _logger.LogInformation("Fetched and cached {Count} ECB rates for {Date}.", rates.Count, date);
+            if (rates.Count == 0)
+            {
+                _logger.LogWarning("No valid rates parsed from ECB feed.");
+                return;
+            }
 
-            return Result<List<CurrencyRate>>.Ok(rates);
-        }
-        catch (HttpRequestException ex)
-        {
-            _logger.LogError(ex, "Network error while fetching ECB rates.");
-            return Result<List<CurrencyRate>>.Fail("Failed to fetch rates due to network error.");
+            await UpdateRatesInDatabase(rates, date, cancellationToken);
+
+            var cacheKey = string.Format(RatesCacheKey, date.ToString("yyyyMMdd"));
+            _cache.Set(cacheKey, rates, new MemoryCacheEntryOptions
+            {
+                AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(_options.CacheDurationHours)
+            });
+
+            _logger.LogInformation("ECB rates successfully updated for {Date}. {Count} currencies processed.", 
+                date.ToString("yyyy-MM-dd"), rates.Count);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Unexpected error while fetching ECB rates.");
-            return Result<List<CurrencyRate>>.Fail("Unexpected error during ECB fetch.");
+            _logger.LogError(ex, "ECB rate update failed.");
+            throw;
         }
+    }
+
+    public async Task<decimal?> GetRateAsync(string baseCurrency, string targetCurrency, DateTime date,
+        CancellationToken cancellationToken)
+    {
+        if (!IsValidCurrencyCode(baseCurrency) || !IsValidCurrencyCode(targetCurrency))
+            return null;
+
+        var cacheKey = string.Format(RatesCacheKey, date.ToString("yyyyMMdd"));
+        if (_cache.TryGetValue(cacheKey, out List<CurrencyRate>? cachedRates))
+        {
+            _logger.LogDebug("Cache hit for ECB rates on {Date}", date);
+            return CalculateCrossRate(cachedRates, baseCurrency, targetCurrency);
+        }
+
+        _logger.LogDebug("Cache miss for ECB rates on {Date}, querying database...", date);
+
+        var rates = await GetRatesFromDatabase(date, cancellationToken);
+        if (rates.Count == 0)
+        {
+            _logger.LogWarning("No rates found in database for {Date}", date);
+            return null;
+        }
+        _cache.Set(cacheKey, rates, TimeSpan.FromHours(_options.CacheDurationHours));
+        
+        return CalculateCrossRate(rates, baseCurrency, targetCurrency);
+    }
+
+    private async Task<List<CurrencyRate>> GetRatesFromDatabase(DateTime date, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await _context.CurrencyRates
+                .Where(r => r.Date.Date == date.Date)
+                .ToListAsync(cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Database read error while getting rates for {Date}", date);
+            return new List<CurrencyRate>();
+        }
+    }
+
+    private async Task UpdateRatesInDatabase(List<CurrencyRate> rates, DateTime date, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var values = string.Join(", ",
+                rates.Select(r =>
+                    $"('{r.Currency}', {r.Rate.ToString(CultureInfo.InvariantCulture)}, '{date:yyyy-MM-dd}'::timestamp with time zone)"));
+
+            var sql = $@"
+                MERGE INTO ""CurrencyRates"" AS target
+                USING (VALUES {values})
+                    AS source(""Currency"", ""Rate"", ""Date"")
+                ON target.""Currency"" = source.""Currency"" AND target.""Date"" = source.""Date""
+                WHEN MATCHED THEN
+                    UPDATE SET ""Rate"" = source.""Rate""
+                WHEN NOT MATCHED THEN
+                    INSERT (""Currency"", ""Rate"", ""Date"")
+                    VALUES (source.""Currency"", source.""Rate"", source.""Date"");";
+
+            await using var transaction = await _context.Database.BeginTransactionAsync(cancellationToken);
+            await _context.Database.ExecuteSqlRawAsync(sql, cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+
+            _logger.LogInformation("Rates merged successfully into DB for {Date}.", date.ToString("yyyy-MM-dd"));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Database update failed for ECB rates on {Date}", date.ToString("yyyy-MM-dd"));
+        }
+    }
+
+    private static bool IsValidCurrencyCode(string code) =>
+        !string.IsNullOrEmpty(code) && code.Length == 3 && code.All(char.IsLetter);
+
+    private static decimal? CalculateCrossRate(List<CurrencyRate> rates, string baseCurrency, string targetCurrency)
+    {
+        var baseRate = rates.FirstOrDefault(r => r.Currency == baseCurrency)?.Rate;
+        var targetRate = rates.FirstOrDefault(r => r.Currency == targetCurrency)?.Rate;
+
+        if (baseCurrency == "EUR") return targetRate;
+        if (targetCurrency == "EUR") return baseRate == null ? null : 1 / baseRate;
+        if (baseRate == null || targetRate == null) return null;
+
+        return targetRate / baseRate;
     }
 }
