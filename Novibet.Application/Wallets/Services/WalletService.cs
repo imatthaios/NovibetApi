@@ -40,6 +40,11 @@ public class WalletService : IWalletService
     {
         _logger.LogInformation("Creating wallet with balance {Balance} and currency {Currency}", initialBalance,
             currency);
+        if (initialBalance < 0)
+        {
+            _logger.LogWarning("Initial balance cannot be negative: {Balance}", initialBalance);
+            return Result<long>.Fail("Initial balance cannot be negative.");
+        }
         var wallet = new Wallet
         {
             Balance = initialBalance,

@@ -1,12 +1,17 @@
-# NovibetApi
+## 📌 Project: Novibet Wallet API
 
-## Architecture Overview
-| Layer                | Responsibility                                                                                          |
-| -------------------- | ------------------------------------------------------------------------------------------------------- |
-| **API**              | Only receives HTTP requests, passes them to MediatR or services, returns responses. No business logic.  |
-| **Application**      | Core business layer. Defines commands, queries, handlers, and **services** implementing business rules. |
-| **Domain**           | Entities and value objects only (no EF, no logic).                                                      |
-| **Infrastructure**   | Data access (EF Core, external services, etc.).                                                         |
-| **MediatR Handlers** | Coordinate request flow — **delegate to domain/application services**.                                  |
-| **Services**         | Implement actual logic (validation, db ops, strategy selection).                                        |
+📚 Architecture: Clean Architecture + CQRS + Strategy Pattern + Background Job (Quartz) + PostgreSQL
 
+🧱 Technologies: ASP.NET Core 8, MediatR, Autofac, Entity Framework Core, Quartz.NET, MemoryCache
+
+☁️ Integration: ECB Exchange Rates (XML feed)
+
+### Architecture Layers
+| Layer              | Responsibility                                        | Key Tech                       |
+| ------------------ | ----------------------------------------------------- | ------------------------------ |
+| **Domain**         | Core business entities (`Wallet`, `CurrencyRate`)     | Plain C# models                |
+| **Application**    | CQRS commands, handlers, MediatR requests, strategies | MediatR, Strategy Pattern      |
+| **Infrastructure** | EF Core context, ECB integration, background jobs     | PostgreSQL, Quartz, HttpClient |
+| **API**            | Controllers, endpoints, DI container setup            | ASP.NET Core 8, Autofac        |
+
+### Assessment
