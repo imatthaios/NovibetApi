@@ -134,20 +134,7 @@ public class EcbRateService : IEcbRateService
     {
         try
         {
-            var values = string.Join(", ",
-                rates.Select(r =>
-                    $"('{r.Currency}', {r.Rate.ToString(CultureInfo.InvariantCulture)}, '{date:yyyy-MM-dd}'::timestamp with time zone)"));
-
-            var sql = $@"
-                MERGE INTO ""CurrencyRates"" AS target
-                USING (VALUES {values})
-                    AS source(""Currency"", ""Rate"", ""Date"")
-                ON target.""Currency"" = source.""Currency"" AND target.""Date"" = source.""Date""
-                WHEN MATCHED THEN
-                    UPDATE SET ""Rate"" = source.""Rate""
-                WHEN NOT MATCHED THEN
-                    INSERT (""Currency"", ""Rate"", ""Date"")
-                    VALUES (source.""Currency"", source.""Rate"", source.""Date"");";
+            var sql = BuildSql.Merge(rates, date);
 
             await using var transaction = await _context.Database.BeginTransactionAsync(cancellationToken);
             await _context.Database.ExecuteSqlRawAsync(sql, cancellationToken);

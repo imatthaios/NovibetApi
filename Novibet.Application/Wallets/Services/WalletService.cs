@@ -130,7 +130,8 @@ public class WalletService : IWalletService
             strat.Execute(wallet, amount);
 
             await _context.SaveChangesAsync(cancellationToken);
-            _cache.Set($"wallet_{walletId}", wallet, CacheOptions);
+            _cache.Remove($"wallet_{walletId}_{currency}");
+            _cache.Set($"wallet_{walletId}_{currency}", wallet, CacheOptions);
             _logger.LogInformation("Wallet {WalletId} adjusted successfully (new balance={Balance})", walletId,
                 wallet.Balance);
 
